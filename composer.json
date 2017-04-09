@@ -1,0 +1,13 @@
+{
+    "name": "dbmover/mysql-tables",
+    "description": "Dbmover plugin to modify existing tables in MySQL",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Marijn Ophorst",
+            "email": "marijn@monomelodies.nl"
+        }
+    ],
+    "require": {}
+}
