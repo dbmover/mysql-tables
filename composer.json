@@ -11,5 +11,10 @@
     ],
     "require": {
         "dbmover/tables": "^0.6.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Dbmover\\Mysql\\Tables\\": "./src"
+        }
     }
 }
