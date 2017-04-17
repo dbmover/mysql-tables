@@ -22,10 +22,10 @@ class Plugin extends Tables\Plugin
                 CONCAT('`', column_name, '`') column_name,
                 column_default,
                 is_nullable,
-                column_type
+                column_type,
+                extra
             FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE ((TABLE_CATALOG = ? AND TABLE_SCHEMA = 'public') OR TABLE_SCHEMA = ?)
-                AND TABLE_NAME = ?
+            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
             ORDER BY ORDINAL_POSITION ASC");
     }
 
@@ -35,9 +35,61 @@ class Plugin extends Tables\Plugin
         return parent::__invoke($sql);
     }
 
-    protected function modifyColumn(string $table, string $column, array $definition) : string
+    protected function modifyColumn(string $table, string $column, array $definition, array $current) : array
     {
-        return "ALTER TABLE $table CHANGE COLUMN $column {$definition['_definition']};";
+        // Types will need some rewriting:
+        $definition['column_type'] = preg_replace('@\s*AUTO_INCREMENT$@', '', $definition['column_type']);
+        $definition['column_type'] = str_replace('INTEGER', 'INT', $definition['column_type']);
+        $definition['column_type'] = preg_replace_callback(
+            '@(TINYINT|SMALLINT|INT|MEDIUMINT|BIGINT)(?!\()@',
+            function ($match) use ($definition) {
+                // Signed/unsigned integers have different lengths in MySQL (wtf...)
+                $mod = strpos($definition['column_type'], 'UNSIGNED') ? 0 : 1;
+                switch ($match[1]) {
+                    case 'TINYINT': return sprintf('TINYINT(%d)', 3 + $mod);
+                    case 'SMALLINT': return sprintf('SMALLINT(%d)', 5 + $mod);
+                    case 'MEDIUMINT': return sprintf('MEDIUMINT(%d)', 8 + $mod);
+                    case 'INT': return sprintf('INT(%d)', 10 + $mod);
+                    // For reasons I don't understand, this logic does not hold for bigints...
+                    case 'BIGINT': return 'BIGINT(20)';
+                }
+                return $match[1];
+            },
+            $definition['column_type']
+        );
+        if (preg_match('@^ENUM@', $definition['column_type'])) {
+            $definition['column_type'] = preg_replace('@,\s+@', ',', strtoupper($definition['column_type']));
+        }
+        if ($definition['column_default'] == 'NOW()') {
+            $definition['column_default'] = 'CURRENT_TIMESTAMP';
+        }
+        if ($definition['column_default'] === 'NULL') {
+            $definition['column_default'] = null;
+        }
+        if (preg_match('@(ON UPDATE.*|AUTO_INCREMENT)@', $definition['_definition'], $match)) {
+            $definition['extra'] = $match[1];
+            $definition['column_default'] = trim(str_replace($match[1], '', $definition['column_default']));
+        } else {
+            $definition['extra'] = '';
+        }
+        if (preg_match("@^'.*?'@", $definition['_default'] ?? '')
+            && preg_match("@'$@", $definition['column_default'])
+        ) {
+            $definition['column_default'] = preg_replace("@'$@", '', $definition['column_default']);
+        }
+
+        switch ($definition['column_type']) {
+            case 'INTEGER': $definition['column_type'] = 'INT(11)'; break;
+        }
+        if ($definition['column_default'] != $current['column_default']
+            || $definition['column_type'] != $current['column_type']
+            || $definition['is_nullable'] != $current['is_nullable']
+            || strtoupper($definition['extra']) != strtoupper($current['extra'])
+        ) {
+            return ["ALTER TABLE $table CHANGE COLUMN $column {$definition['_definition']};"];
+        } else {
+            return [];
+        }
     }
 
     protected function checkTableStatus(string $table, string $sql)
